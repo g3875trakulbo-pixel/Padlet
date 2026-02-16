@@ -2,111 +2,137 @@ import streamlit as st
 import pandas as pd
 import re, os, base64
 
-# --- 1. หน้าเว็บและดีไซน์ Header ---
+# --- 1. ตั้งค่าหน้าตาและโทนสีเขียว-ขาว ---
 st.set_page_config(page_title="ระบบครูตระกูล", layout="wide")
 
 def get_b64(file):
     if os.path.exists(file):
-        with open(file, "rb") as f: return base64.b64encode(f.read()).decode()
+        try:
+            with open(file, "rb") as f: return base64.b64encode(f.read()).decode()
+        except: return None
     return None
 
 img = get_b64("teacher.jpg")
 
-# Layout: ชื่อระบบบนสุด -> รูปครูตรงกลาง -> ชื่อครูล่างรูป (โทนม่วง-ชมพู-ส้ม)
+# CSS สำหรับ Layout โทนสีเขียว (จัดระเบียบใหม่ให้เหมือนภาพตัวอย่าง)
 st.markdown(f"""
 <style>
     .main-header {{
-        background: linear-gradient(90deg, #9c27b0, #e91e63, #ff9800);
-        padding: 40px 20px;
-        border-radius: 0 0 30px 30px;
+        background-color: #1b5e20;
+        padding: 15px;
+        border-radius: 10px 10px 0 0;
         text-align: center;
         color: white;
-        margin-top: -60px;
-        box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+    }}
+    .teacher-card {{
+        background-color: #ffffff;
+        border: 2px solid #e0e0e0;
+        border-radius: 12px;
+        padding: 20px;
+        margin: 15px 0;
+        display: flex;
+        align-items: center;
+        gap: 25px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
     }}
     .teacher-img {{
-        width: 120px; height: 120px;
+        width: 100px; height: 100px;
         border-radius: 50%;
-        border: 4px solid white;
+        border: 3px solid #4caf50;
         object-fit: cover;
-        margin: 20px 0;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    }}
+    .stTabs [data-baseweb="tab-list"] {{ gap: 8px; }}
+    .stTabs [data-baseweb="tab"] {{
+        background-color: #f1f8e9;
+        border-radius: 8px 8px 0 0;
+        color: #2e7d32;
     }}
 </style>
-<div class="main-header">
-    <h1 style="font-size: 2.8rem; font-weight: 800; margin:0;">📋 ระบบเช็คงานอัจฉริยะ</h1>
-    <p style="font-size: 1.1rem; opacity: 0.9;">โรงเรียนตระกาศประชาสามัคคี | ภาคเรียนที่ 2/2568</p>
-    {f'<img src="data:image/jpeg;base64,{img}" class="teacher-img">' if img else '<div style="height:20px;"></div>'}
-    <h2 style="margin:0; font-size: 1.8rem;">ครูตระกูล บุญชิต</h2>
-    <div style="background: rgba(255,255,255,0.2); display: inline-block; padding: 3px 20px; border-radius: 50px; margin-top: 10px; border: 1px solid white; font-size: 0.8rem;">
-        PROFESSIONAL TEACHER
-    </div>
-</div><br>""", unsafe_allow_html=True)
 
-# --- 2. ฟังก์ชันจัดการชื่อและสไตล์ตาราง ---
+<div class="main-header">
+    <h2 style="margin:0; font-weight: 300; letter-spacing: 1px;">ระบบเช็คงานอัจฉริยะ</h2>
+</div>
+
+<div class="teacher-card">
+    {f'<img src="data:image/jpeg;base64,{img}" class="teacher-img">' if img else '<div style="width:100px;height:100px;background:#eee;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#999;">No Img</div>'}
+    <div>
+        <h2 style="margin:0; color: #1b5e20;">ครูตระกูล บุญชิต (ครูเจมส์)</h2>
+        <p style="margin:0; color: #666; font-size: 1rem;">โรงเรียนตระกาศประชาสามัคคี | ภาคเรียนที่ 2/2568</p>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# --- 2. ฟังก์ชันจัดการชื่อและสไตล์ ---
 def clean_n(n):
     n = str(n).split('\n')[0].strip()
-    for p in ['นาย','นางสาว','นาง','เด็กชาย','เด็กหญิง','น.ส.','ด.ช.','ด.ญ.','น.ส','ด.ช','ด.ญ']:
-        n = re.sub(f'^{p}\s*', '', n)
+    prefixes = ['นาย','นางสาว','นาง','เด็กชาย','เด็กหญิง','น.ส.','ด.ช.','ด.ญ.']
+    for p in prefixes: n = re.sub(f'^{p}\s*', '', n)
     return re.sub(r'^[.\-\s0-9]+', '', n).strip()
 
 def apply_style(row):
-    color_map = {
-        'ม.3': ['#f3e5f5', '#7b1fa2'], # ม่วง
-        'ม.4': ['#e3f2fd', '#1565c0'], # ฟ้า
-        'ม.5': ['#e8f5e9', '#2e7d32'], # เขียว
-        'ม.6': ['#fff3e0', '#e65100'], # ส้ม
-    }
-    bg, fg = color_map.get(row['ระดับ'], ['#ffffff', '#000000'])
-    return [f'background-color: {bg}; color: {fg}; font-weight: bold; border: 0.5px solid #eee;'] * len(row)
+    return ['background-color: white; color: #1b5e20; border: 0.5px solid #eee;'] * len(row)
 
-# --- 3. ส่วนประมวลผล (แก้ไขให้ทำงานได้จริง) ---
-files = st.file_uploader("📂 อัปโหลดไฟล์ Padlet (CSV/Excel)", type=["csv", "xlsx"], accept_multiple_files=True)
+# --- 3. ส่วนประมวลผล (เพิ่มระบบเช็ค Error) ---
+files = st.file_uploader("📂 อัปโหลดไฟล์จาก Padlet (CSV/Excel)", type=["csv", "xlsx"], accept_multiple_files=True)
 
 if files:
     all_data = []
     for f in files:
         try:
-            df = pd.read_csv(f, encoding='utf-8-sig') if f.name.endswith('.csv') else pd.read_excel(f)
-            # พยายามหาระดับชั้นจากชื่อไฟล์
-            lv_match = re.search(r'([3-6])', f.name)
-            lv = f"ม.{lv_match.group(1)}" if lv_match else "ทั่วไป"
+            # ตรวจสอบนามสกุลไฟล์และอ่านข้อมูล
+            if f.name.endswith('.csv'):
+                df = pd.read_csv(f, encoding='utf-8-sig')
+            else:
+                df = pd.read_excel(f)
+            
+            # หาระดับชั้นจากชื่อไฟล์
+            lv_m = re.search(r'([3-6])', f.name)
+            lv = f"ม.{lv_m.group(1)}" if lv_m else "ทั่วไป"
+            group_name = f.name.split('.')[0]
             
             for _, r in df.iterrows():
-                # รวมข้อมูลทุกคอลัมน์เพื่อหา เลขที่ และ กิจกรรม
-                full_text = " ".join(map(str, r.values))
-                sid = re.search(r'เลขที่\s*(\d+)', full_text)
-                act = re.search(r'กิจกรรม(?:ที่)?\s*1\.(\d+)', full_text)
+                # รวมข้อมูลทุก Column เป็น String เพื่อใช้ Regex ค้นหา
+                txt = " ".join(map(str, r.values))
+                sid = re.search(r'เลขที่\s*(\d+)', txt)
+                act = re.search(r'กิจกรรม(?:ที่)?\s*1\.(\d+)', txt)
+                grp_match = re.search(r'กลุ่มที่\s*(\d+)', txt)
+                group_no = f"กลุ่มที่ {grp_match.group(1)}" if grp_match else ""
                 
                 if sid and act:
-                    name_raw = r.get('เนื้อหา', r.get('เรื่อง', 'ไม่ระบุชื่อ'))
                     all_data.append({
-                        'ระดับ': lv, 'เลขที่': int(sid.group(1)), 
-                        'ชื่อ-นามสกุล': clean_n(name_raw), 
+                        'เลขที่': int(sid.group(1)),
+                        'ระดับ': lv,
+                        'ชื่อ-นามสกุล': clean_n(r.get('เนื้อหา', r.get('เรื่อง', 'ไม่ระบุชื่อ'))),
+                        'ชื่อกลุ่ม': f"{group_no} {group_name}".strip(),
                         'กิจกรรม': f"กิจกรรมที่ 1.{act.group(1)}"
                     })
         except Exception as e:
-            st.error(f"เกิดข้อผิดพลาดกับไฟล์ {f.name}: {e}")
+            st.error(f"❌ ไฟล์ {f.name} มีปัญหา: {e}")
 
     if all_data:
         df_final = pd.DataFrame(all_data).drop_duplicates()
-        
-        # จุดสำคัญ: เช็คก่อนว่ามีข้อมูลกิจกรรมไหม
-        if not df_final.empty:
-            # สร้างตาราง Pivot
-            pivot = df_final.pivot_table(index=['ระดับ','เลขที่','ชื่อ-นามสกุล'], 
-                                           columns='กิจกรรม', 
-                                           values='กิจกรรม', 
-                                           aggfunc=lambda x: 1).fillna(0)
-            
-            # คำนวณคะแนนรวม
-            pivot['คะแนนรวม'] = pivot.sum(axis=1).astype(int)
-            res = pivot.replace({1:'✔', 0:'-'}).reset_index().sort_values(['ระดับ','เลขที่'])
-            
-            # แสดงตาราง
-            st.dataframe(res.style.apply(apply_style, axis=1), use_container_width=True, hide_index=True)
-            
-            # ปุ่มดาวน์โหลด
-            st.download_button("📥 โหลดรายงาน (CSV)", res.to_csv(index=False).encode('utf-8-sig'), "Report_KruJames.csv", "text/csv")
+        tab_list = ["ม.3", "ม.4", "ม.5", "ม.6"]
+        tabs = st.tabs(tab_list)
+
+        for i, level in enumerate(tab_list):
+            with tabs[i]:
+                df_lv = df_final[df_final['ระดับ'] == level]
+                if not df_lv.empty:
+                    try:
+                        # สร้าง Pivot Table
+                        pivot = df_lv.pivot_table(index=['เลขที่','ระดับ','ชื่อ-นามสกุล','ชื่อกลุ่ม'], 
+                                                   columns='กิจกรรม', values='กิจกรรม', aggfunc=lambda x:1).fillna(0)
+                        
+                        # คำนวณคะแนนรวม
+                        pivot['คะแนนรวม'] = pivot.sum(axis=1).astype(int)
+                        res = pivot.replace({1:'✔', 0:'-'}).reset_index().sort_values('เลขที่')
+                        
+                        st.markdown(f"#### 🟢 ผลการเช็คงานชั้น {level}")
+                        st.dataframe(res.style.apply(apply_style, axis=1), use_container_width=True, hide_index=True)
+                        st.download_button(f"📥 ดาวน์โหลดไฟล์ {level}", res.to_csv(index=False).encode('utf-8-sig'), f"Report_{level}.csv")
+                    except Exception as e:
+                        st.warning(f"⚠️ ไม่สามารถสร้างตารางของ {level} ได้: ข้อมูลไม่ครบถ้วน")
+                else:
+                    st.info(f"🍃 ยังไม่มีข้อมูลการส่งงานของ {level}")
     else:
-        st.info("💡 คำแนะนำ: โปรดอัปโหลดไฟล์ และตรวจสอบว่าใน Padlet นักเรียนพิมพ์คำว่า 'เลขที่' และ 'กิจกรรม 1.x' ถูกต้องหรือไม่")
+        st.warning("🔎 ไม่พบข้อมูล 'เลขที่' หรือ 'กิจกรรม' ในไฟล์ที่อัปโหลด กรุณาตรวจสอบการตั้งชื่อโพสต์ของนักเรียน")
