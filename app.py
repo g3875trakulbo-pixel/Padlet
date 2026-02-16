@@ -14,7 +14,7 @@ def get_b64(file):
         except: return None
     return None
 
-img_b64 = get_b64("teacher.jpg")
+img_b64 = get_b64("teacher.jpeg")
 placeholder_img = "https://cdn-icons-png.flaticon.com/512/3429/3429433.png"
 
 # --- 2. CSS สำหรับ Header และ UI ---
