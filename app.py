@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import re, os, base64
 
-# --- 1. ตั้งค่าหน้าตาโปรแกรม (เขียว-ขาว) ---
+# --- 1. ตั้งค่าหน้าตาและโทนสีเขียว-ขาว ---
 st.set_page_config(page_title="ระบบครูตระกูล", layout="wide")
 
 def get_b64(file):
@@ -20,6 +20,7 @@ st.markdown(f"""
     .main-header {{ background-color: #1b5e20; padding: 15px; border-radius: 10px 10px 0 0; text-align: center; color: white; }}
     .teacher-card {{ background-color: #ffffff; border: 2px solid #e0e0e0; border-radius: 12px; padding: 20px; margin: 15px 0; display: flex; align-items: center; gap: 25px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }}
     .teacher-img {{ width: 110px; height: 110px; border-radius: 50%; border: 4px solid #4caf50; object-fit: cover; }}
+    .level-header {{ background-color: #4caf50; color: white; padding: 10px 20px; border-radius: 8px; margin-top: 30px; margin-bottom: 10px; font-size: 1.5rem; }}
 </style>
 <div class="main-header"><h2 style="margin:0;">📋 ระบบเช็คงานอัจฉริยะ</h2></div>
 <div class="teacher-card">
@@ -31,65 +32,9 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- 2. ฟังก์ชันจัดการข้อมูล ---
-def clean_name(n):
+# --- 2. ฟังก์ชันจัดการความสะอาดของชื่อ ---
+def clean_full_name(n):
+    if pd.isna(n): return "ไม่ระบุชื่อ"
     n = str(n).split('\n')[0].strip()
-    prefixes = ['นาย','นางสาว','นาง','เด็กชาย','เด็กหญิง','น.ส.','ด.ช.','ด.ญ.']
-    for p in prefixes: n = re.sub(f'^{p}\s*', '', n)
-    return re.sub(r'^[.\-\s0-9]+', '', n).strip()
-
-# --- 3. ส่วนประมวลผล (แก้ไขจุด Error) ---
-uploaded_files = st.file_uploader("📂 อัปโหลดไฟล์ Padlet (CSV/Excel)", type=["csv", "xlsx"], accept_multiple_files=True)
-
-if uploaded_files:
-    all_rows = []
-    for f in uploaded_files:
-        try:
-            df = pd.read_csv(f, encoding='utf-8-sig') if f.name.endswith('.csv') else pd.read_excel(f)
-            lv_m = re.search(r'([3-6])', f.name)
-            level = f"ม.{lv_m.group(1)}" if lv_m else "ทั่วไป"
-            file_name = f.name.split('.')[0]
-            
-            for _, row in df.iterrows():
-                # กวาดข้อมูลทุกช่องมาเช็ค
-                full_text = " ".join(map(str, row.values))
-                sid = re.search(r'เลขที่\s*(\d+)', full_text)
-                act = re.search(r'กิจกรรม(?:ที่)?\s*1\.(\d+)', full_text)
-                grp = re.search(r'กลุ่มที่\s*(\d+)', full_text)
-                
-                if sid and act:
-                    group_info = f"กลุ่มที่ {grp.group(1)} {file_name}" if grp else file_name
-                    all_rows.append({
-                        'เลขที่': int(sid.group(1)),
-                        'ระดับ': level,
-                        'ชื่อ-นามสกุล': clean_name(row.get('เนื้อหา', row.get('เรื่อง', 'ไม่ระบุชื่อ'))),
-                        'ชื่อกลุ่ม': group_info.strip(),
-                        'กิจกรรม': f"กิจกรรมที่ 1.{act.group(1)}"
-                    })
-        except Exception as e: st.error(f"ไฟล์ {f.name} มีปัญหา: {e}")
-
-    if all_rows:
-        df_all = pd.DataFrame(all_rows).drop_duplicates()
-        
-        # ช่องค้นหาชื่อ
-        st.markdown("### 🔍 กรองข้อมูลนักเรียน")
-        search = st.text_input("พิมพ์ชื่อเพื่อค้นหา...", "")
-        if search:
-            df_all = df_all[df_all['ชื่อ-นามสกุล'].str.contains(search, case=False, na=False)]
-
-        # --- จุดแก้ไข: เช็คก่อนสร้าง Pivot ---
-        if not df_all.empty and 'กิจกรรม' in df_all.columns:
-            pivot = df_all.pivot_table(index=['เลขที่', 'ระดับ', 'ชื่อ-นามสกุล', 'ชื่อกลุ่ม'], 
-                                      columns='กิจกรรม', values='กิจกรรม', aggfunc=lambda x: 1).fillna(0)
-            
-            pivot['คะแนนรวม'] = pivot.sum(axis=1).astype(int)
-            res = pivot.replace({1:'✔', 0:'-'}).reset_index().sort_values(['ระดับ', 'เลขที่'])
-            
-            # จัดลำดับคอลัมน์
-            cols = ['เลขที่', 'ระดับ', 'ชื่อ-นามสกุล', 'ชื่อกลุ่ม'] + [c for c in res.columns if c not in ['เลขที่', 'ระดับ', 'ชื่อ-นามสกุล', 'ชื่อกลุ่ม']]
-            res = res[cols]
-            
-            st.dataframe(res.style.apply(lambda x: ['color: #1b5e20']*len(x), axis=1), use_container_width=True, hide_index=True)
-            st.download_button("📥 โหลดรายงาน (CSV)", res.to_csv(index=False).encode('utf-8-sig'), "Report.csv")
-        else:
-            st.warning("🔎 ไม่พบข้อมูลที่สอดคล้องกับเงื่อนไข (ตรวจสอบว่านักเรียนพิมพ์ 'เลขที่' และ 'กิจกรรม' ถูกต้องหรือไม่)")
+    prefixes = ['นาย', 'นางสาว', 'นาง', 'เด็กชาย', 'เด็กหญิง', r'น\.ส\.', r'ด\.ช\.', r'ด\.ญ\.', r'น\.ส', r'ด\.ช', r'ด\.ญ']
+    for p in
