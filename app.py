@@ -2,59 +2,94 @@ import streamlit as st
 import pandas as pd
 import re, os, base64
 
-# --- 1. ตั้งค่าหน้าตาโปรแกรม (โทนเขียว-ขาว) ---
-st.set_page_config(page_title="ระบบเช็คงานครูตระกูล", layout="wide")
+# --- 1. ตั้งค่าหน้าตาโปรแกรม (เขียว-ขาว) ---
+st.set_page_config(page_title="ระบบครูตระกูล", layout="wide")
 
 def get_b64(file):
     if os.path.exists(file):
         try:
-            with open(file, "rb") as f:
-                return base64.b64encode(f.read()).decode()
+            with open(file, "rb") as f: return base64.b64encode(f.read()).decode()
         except: return None
     return None
 
-# ตรวจสอบรูปภาพ teacher.jpg ในโฟลเดอร์
 img_b64 = get_b64("teacher.jpg")
-# ถ้าไม่มีรูปในเครื่อง ให้ใช้รูปไอคอนครูเป็นตัวสำรอง (Placeholder)
 placeholder_img = "https://cdn-icons-png.flaticon.com/512/3429/3429433.png"
 
 st.markdown(f"""
 <style>
-    /* พื้นหลังและ Header */
-    .stApp {{ background-color: #f9fbf9; }}
-    .main-header {{
-        background-color: #1b5e20; /* เขียวเข้ม */
-        padding: 15px;
-        border-radius: 10px 10px 0 0;
-        text-align: center;
-        color: white;
-    }}
-    /* การ์ดโปรไฟล์ครูตระกูล */
-    .teacher-card {{
-        background-color: #ffffff;
-        border: 2px solid #e0e0e0;
-        border-radius: 12px;
-        padding: 20px;
-        margin: 15px 0;
-        display: flex;
-        align-items: center;
-        gap: 25px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-    }}
-    .teacher-img {{
-        width: 120px; height: 120px;
-        border-radius: 50%;
-        border: 4px solid #4caf50;
-        object-fit: cover;
-    }}
+    .main-header {{ background-color: #1b5e20; padding: 15px; border-radius: 10px 10px 0 0; text-align: center; color: white; }}
+    .teacher-card {{ background-color: #ffffff; border: 2px solid #e0e0e0; border-radius: 12px; padding: 20px; margin: 15px 0; display: flex; align-items: center; gap: 25px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }}
+    .teacher-img {{ width: 110px; height: 110px; border-radius: 50%; border: 4px solid #4caf50; object-fit: cover; }}
 </style>
-
-<div class="main-header">
-    <h2 style="margin:0; font-weight: 300; letter-spacing: 1px;">📋 ระบบเช็คงานอัจฉริยะ</h2>
-</div>
-
+<div class="main-header"><h2 style="margin:0;">📋 ระบบเช็คงานอัจฉริยะ</h2></div>
 <div class="teacher-card">
     <img src="{f'data:image/jpeg;base64,{img_b64}' if img_b64 else placeholder_img}" class="teacher-img">
     <div>
-        <h1 style="margin:0; color: #1b5e20; font-size: 2rem;">ครูตระกูล บุญชิต</h1>
-        <p style="margin:0; color: #666; font-size: 1.1rem;">โรงเรียนตระกาศประชาสามัคคี |
+        <h1 style="margin:0; color: #1b5e20;">ครูตระกูล บุญชิต</h1>
+        <p style="margin:0; color: #666;">โรงเรียนตระกาศประชาสามัคคี | ภาคเรียนที่ 2/2568</p>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# --- 2. ฟังก์ชันจัดการข้อมูล ---
+def clean_name(n):
+    n = str(n).split('\n')[0].strip()
+    prefixes = ['นาย','นางสาว','นาง','เด็กชาย','เด็กหญิง','น.ส.','ด.ช.','ด.ญ.']
+    for p in prefixes: n = re.sub(f'^{p}\s*', '', n)
+    return re.sub(r'^[.\-\s0-9]+', '', n).strip()
+
+# --- 3. ส่วนประมวลผล (แก้ไขจุด Error) ---
+uploaded_files = st.file_uploader("📂 อัปโหลดไฟล์ Padlet (CSV/Excel)", type=["csv", "xlsx"], accept_multiple_files=True)
+
+if uploaded_files:
+    all_rows = []
+    for f in uploaded_files:
+        try:
+            df = pd.read_csv(f, encoding='utf-8-sig') if f.name.endswith('.csv') else pd.read_excel(f)
+            lv_m = re.search(r'([3-6])', f.name)
+            level = f"ม.{lv_m.group(1)}" if lv_m else "ทั่วไป"
+            file_name = f.name.split('.')[0]
+            
+            for _, row in df.iterrows():
+                # กวาดข้อมูลทุกช่องมาเช็ค
+                full_text = " ".join(map(str, row.values))
+                sid = re.search(r'เลขที่\s*(\d+)', full_text)
+                act = re.search(r'กิจกรรม(?:ที่)?\s*1\.(\d+)', full_text)
+                grp = re.search(r'กลุ่มที่\s*(\d+)', full_text)
+                
+                if sid and act:
+                    group_info = f"กลุ่มที่ {grp.group(1)} {file_name}" if grp else file_name
+                    all_rows.append({
+                        'เลขที่': int(sid.group(1)),
+                        'ระดับ': level,
+                        'ชื่อ-นามสกุล': clean_name(row.get('เนื้อหา', row.get('เรื่อง', 'ไม่ระบุชื่อ'))),
+                        'ชื่อกลุ่ม': group_info.strip(),
+                        'กิจกรรม': f"กิจกรรมที่ 1.{act.group(1)}"
+                    })
+        except Exception as e: st.error(f"ไฟล์ {f.name} มีปัญหา: {e}")
+
+    if all_rows:
+        df_all = pd.DataFrame(all_rows).drop_duplicates()
+        
+        # ช่องค้นหาชื่อ
+        st.markdown("### 🔍 กรองข้อมูลนักเรียน")
+        search = st.text_input("พิมพ์ชื่อเพื่อค้นหา...", "")
+        if search:
+            df_all = df_all[df_all['ชื่อ-นามสกุล'].str.contains(search, case=False, na=False)]
+
+        # --- จุดแก้ไข: เช็คก่อนสร้าง Pivot ---
+        if not df_all.empty and 'กิจกรรม' in df_all.columns:
+            pivot = df_all.pivot_table(index=['เลขที่', 'ระดับ', 'ชื่อ-นามสกุล', 'ชื่อกลุ่ม'], 
+                                      columns='กิจกรรม', values='กิจกรรม', aggfunc=lambda x: 1).fillna(0)
+            
+            pivot['คะแนนรวม'] = pivot.sum(axis=1).astype(int)
+            res = pivot.replace({1:'✔', 0:'-'}).reset_index().sort_values(['ระดับ', 'เลขที่'])
+            
+            # จัดลำดับคอลัมน์
+            cols = ['เลขที่', 'ระดับ', 'ชื่อ-นามสกุล', 'ชื่อกลุ่ม'] + [c for c in res.columns if c not in ['เลขที่', 'ระดับ', 'ชื่อ-นามสกุล', 'ชื่อกลุ่ม']]
+            res = res[cols]
+            
+            st.dataframe(res.style.apply(lambda x: ['color: #1b5e20']*len(x), axis=1), use_container_width=True, hide_index=True)
+            st.download_button("📥 โหลดรายงาน (CSV)", res.to_csv(index=False).encode('utf-8-sig'), "Report.csv")
+        else:
+            st.warning("🔎 ไม่พบข้อมูลที่สอดคล้องกับเงื่อนไข (ตรวจสอบว่านักเรียนพิมพ์ 'เลขที่' และ 'กิจกรรม' ถูกต้องหรือไม่)")
