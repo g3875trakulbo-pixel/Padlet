@@ -2,131 +2,182 @@ import streamlit as st
 import pandas as pd
 import re, os, base64
 
-# --- 1. การตั้งค่าหน้าตา ---
-st.set_page_config(page_title="ระบบครูตระกูล", layout="wide")
+# --- 1. การตั้งค่าหน้าตาและสไตล์ ---
+st.set_page_config(page_title="ระบบครูตระกูล v2.5", layout="wide")
 
-def get_b64(file):
-    if os.path.exists(file):
-        try:
-            with open(file, "rb") as f:
-                return base64.b64encode(f.read()).decode()
-        except: return None
-    return None
-
-img_b64 = get_b64("teacher.jpg")
-placeholder_img = "https://cdn-icons-png.flaticon.com/512/3429/3429433.png"
-
-# --- 2. แยก CSS เพื่อป้องกัน Syntax Error ---
 st.markdown("""
 <style>
-    .main-header { background-color: #1b5e20; padding: 15px; border-radius: 10px 10px 0 0; text-align: center; color: white; }
-    .teacher-card { background-color: #ffffff; border: 2px solid #e0e0e0; border-radius: 12px; padding: 20px; margin: 15px 0; display: flex; align-items: center; gap: 25px; }
-    .teacher-img { width: 110px; height: 110px; border-radius: 50%; border: 4px solid #4caf50; object-fit: cover; }
-    .level-header { background-color: #4caf50; color: white; padding: 10px 20px; border-radius: 8px; margin-top: 30px; margin-bottom: 10px; font-size: 1.5rem; }
+    /* Header & Cards */
+    .main-header { background-color: #1b5e20; padding: 20px; border-radius: 12px; text-align: center; color: white; margin-bottom: 20px; }
+    .teacher-card { background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 15px; padding: 20px; display: flex; align-items: center; gap: 20px; margin-bottom: 30px; }
+    .teacher-img { width: 90px; height: 90px; border-radius: 50%; border: 3px solid #4caf50; object-fit: cover; }
+    
+    /* Table & Headers */
+    .level-header { background-color: #2e7d32; color: white; padding: 10px 20px; border-radius: 8px; margin-top: 30px; margin-bottom: 15px; font-size: 1.3rem; font-weight: bold; }
+    .stDataFrame { border-radius: 10px; overflow: hidden; }
+    
+    /* Metrics */
+    [data-testid="stMetricValue"] { color: #1b5e20; font-size: 1.8rem; }
 </style>
 """, unsafe_allow_html=True)
 
-# ส่วนโปรไฟล์
-img_src = f"data:image/jpeg;base64,{img_b64}" if img_b64 else placeholder_img
+# --- 2. ฟังก์ชันช่วยประมวลผล (Utility Functions) ---
+
+def strict_clean_name(n):
+    """ฟังก์ชันล้างชื่อ-นามสกุลให้สะอาดที่สุด"""
+    if pd.isna(n) or str(n).strip() == "": 
+        return "ไม่ระบุชื่อ"
+    
+    # ล้าง HTML และขึ้นบรรทัดใหม่
+    n = re.sub('<[^<]+?>', '', str(n)) 
+    n = n.replace('\n', ' ').strip()
+    
+    # ตัดคำนำหน้าชื่อ (Prefixes)
+    prefixes = [
+        'นาย', 'นางสาว', 'นาง', 'เด็กชาย', 'เด็กหญิง', 
+        r'น\.ส\.', r'ด\.ช\.', r'ด\.ญ\.', r'น\.ส', r'ด\.ช', r'ด\.ญ', 
+        r'นส\.', r'ดช\.', r'ดญ\.', 'นส ', 'ดช ', 'ดญ '
+    ]
+    for p in prefixes:
+        n = re.sub(f'^{p}', '', n).strip()
+    
+    # ตัดข้อความส่วนเกิน (กลุ่ม/เลขที่/ชั้น/สัญลักษณ์)
+    keywords = [
+        'กลุ่ม', 'เลขที่', 'กิจกรรม', 'ชั้น', 'ม\.', 'เลข', 
+        'No\.', '#', 'ชื่อเล่น', 'สมาชิก', 'งานที่', r'\(', r'\['
+    ]
+    pattern = '|'.join(keywords)
+    n = re.split(pattern, n, flags=re.IGNORECASE)[0]
+    
+    # ลบตัวเลขและสัญลักษณ์หัว-ท้าย
+    n = re.sub(r'^[0-9.\-\s]+', '', n) 
+    n = re.sub(r'[0-9.\-\s]+$', '', n) 
+    
+    # รวบช่องว่างที่เกินมา
+    n = re.sub(r'\s+', ' ', n).strip()
+    
+    return n if n else "ไม่ระบุชื่อ"
+
+def get_image_base64(path):
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    return None
+
+# --- 3. ส่วนแสดงผล Profile ครู ---
+img_b64 = get_image_base64("teacher.jpg")
+img_src = f"data:image/jpeg;base64,{img_b64}" if img_b64 else "https://cdn-icons-png.flaticon.com/512/3429/3429433.png"
+
 st.markdown(f"""
-<div class="main-header"><h2 style="margin:0;">📋 ระบบเช็คงานอัจฉริยะ</h2></div>
+<div class="main-header"><h2>📋 ระบบเช็คงานอัจฉริยะ (Padlet Parser)</h2></div>
 <div class="teacher-card">
     <img src="{img_src}" class="teacher-img">
     <div>
-        <h1 style="margin:0; color: #1b5e20;">ครูตระกูล บุญชิต</h1>
+        <h2 style="margin:0; color: #1b5e20;">ครูตระกูล บุญชิต</h2>
         <p style="margin:0; color: #666;">โรงเรียนตระกาศประชาสามัคคี | ภาคเรียนที่ 2/2568</p>
     </div>
 </div>
 """, unsafe_allow_html=True)
 
-# --- 3. ฟังก์ชันล้างชื่อแบบเข้มงวดที่สุด ---
-def strict_clean_name(n):
-    if pd.isna(n): return "ไม่ระบุชื่อ"
-    n = str(n).replace('\n', ' ').strip()
-    
-    # [1] ตัดคำนำหน้าชื่อ
-    prefixes = ['นาย', 'นางสาว', 'นาง', 'เด็กชาย', 'เด็กหญิง', r'น\.ส\.', r'ด\.ช\.', r'ด\.ญ\.', r'น\.ส', r'ด\.ช', r'ด\.ญ', 'นส ', 'ดช ', 'ดญ ']
-    for p in prefixes:
-        n = re.sub(f'^{p}\s*', '', n)
-    
-    # [2] ตัดข้อความหลังนามสกุล (กลุ่ม/เลขที่/ชั้น/สมาชิก/ชื่อเล่น)
-    n = re.split(r'กลุ่ม|เลขที่|กิจกรรม|ชั้น|ม\.|เลข|No\.|#|ชื่อเล่น|สมาชิก', n)[0]
-    
-    # [3] ล้างสัญลักษณ์และตัวเลขหัว-ท้าย
-    n = re.sub(r'^[.\-\s0-9]+', '', n)
-    n = re.sub(r'[.\-\s0-9]+$', '', n)
-    
-    return n.strip()
-
-# --- 4. ประมวลผลและสร้างตาราง ---
-uploaded_files = st.file_uploader("📂 อัปโหลดไฟล์จาก Padlet", type=["csv", "xlsx"], accept_multiple_files=True)
+# --- 4. การจัดการไฟล์และการดึงข้อมูล ---
+uploaded_files = st.file_uploader("📂 อัปโหลดไฟล์ CSV/XLSX จาก Padlet", type=["csv", "xlsx"], accept_multiple_files=True)
 
 if uploaded_files:
-    all_rows = []
-    # รายชื่อกิจกรรม 1.1 - 1.14
+    all_data = []
     full_acts = [f"กิจกรรมที่ 1.{i}" for i in range(1, 15)]
 
     for f in uploaded_files:
         try:
-            if f.name.endswith('.csv'):
-                df = pd.read_csv(f, encoding='utf-8-sig')
-            else:
-                df = pd.read_excel(f)
+            df = pd.read_csv(f, encoding='utf-8-sig') if f.name.endswith('.csv') else pd.read_excel(f)
             
-            lv_m = re.search(r'([3-6])', f.name)
-            level = f"ม.{lv_m.group(1)}" if lv_m else "ทั่วไป"
-            file_name = f.name.split('.')[0]
+            # ค้นหาระดับชั้นจากชื่อไฟล์
+            lv_match = re.search(r'([3-6])', f.name)
+            level = f"ม.{lv_match.group(1)}" if lv_match else "ทั่วไป"
             
             for _, row in df.iterrows():
-                # รวมข้อมูลทุกช่องเพื่อค้นหา เลขที่ และ กิจกรรม
-                txt = " ".join(map(str, row.values))
-                sid = re.search(r'เลขที่\s*(\d+)', txt)
-                act = re.search(r'กิจกรรม(?:ที่)?\s*1\.(\d+)', txt)
-                grp = re.search(r'กลุ่มที่\s*(\d+)', txt)
+                # รวมข้อมูลทุกช่องเพื่อค้นหา Pattern
+                combined_text = " ".join(map(str, row.values))
                 
-                if sid and act:
-                    grp_info = f"กลุ่มที่ {grp.group(1)} {file_name}" if grp else file_name
-                    # ดึงเนื้อหามาล้างชื่อ
-                    raw_name = row.get('เนื้อหา', row.get('เรื่อง', 'ไม่ระบุชื่อ'))
-                    all_rows.append({
-                        'เลขที่': int(sid.group(1)),
-                        'ระดับ': level,
-                        'ชื่อ-นามสกุล': strict_clean_name(raw_name),
-                        'ชื่อกลุ่ม': grp_info.strip(),
-                        'กิจกรรม': f"กิจกรรมที่ 1.{act.group(1)}"
-                    })
-        except: continue
+                # ค้นหาเลขที่ และ กิจกรรม 1.1 - 1.14
+                sid_match = re.search(r'(?:เลขที่|No\.|#)\s*(\d+)', combined_text)
+                act_match = re.search(r'1\.(\d{1,2})', combined_text)
+                
+                if sid_match and act_match:
+                    act_num = int(act_match.group(1))
+                    if 1 <= act_num <= 14:
+                        # ดึงชื่อจาก Subject (หัวข้อ) หรือ Body (เนื้อหา)
+                        raw_name = row.get('Subject', row.get('เนื้อหา', row.get('Body', 'ไม่ระบุชื่อ')))
+                        
+                        all_data.append({
+                            'เลขที่': int(sid_match.group(1)),
+                            'ระดับ': level,
+                            'ชื่อ-นามสกุล': strict_clean_name(raw_name),
+                            'กิจกรรม': f"กิจกรรมที่ 1.{act_num}"
+                        })
+        except Exception as e:
+            st.error(f"ผิดพลาดที่ไฟล์ {f.name}: {e}")
 
-    if all_rows:
-        df_all = pd.DataFrame(all_rows).drop_duplicates()
-        for lv in ["ม.3", "ม.4", "ม.5", "ม.6"]:
-            df_lv = df_all[df_all['ระดับ'] == lv]
-            if not df_lv.empty:
-                st.markdown(f'<div class="level-header">🟢 ชั้น {lv}</div>', unsafe_allow_html=True)
-                
-                # ทำ Pivot และเติมกิจกรรมให้ครบ
-                pivot = df_lv.pivot_table(index=['เลขที่', 'ระดับ', 'ชื่อ-นามสกุล', 'ชื่อกลุ่ม'], 
-                                          columns='กิจกรรม', values='กิจกรรม', aggfunc=lambda x: 1).fillna(0)
-                
-                for a in full_acts:
-                    if a not in pivot.columns: pivot[a] = 0
-                
-                pivot = pivot[full_acts]
-                pivot['คะแนนรวม'] = pivot.sum(axis=1).astype(int)
-                res = pivot.replace({1:'✔', 0:'-'}).reset_index().sort_values('เลขที่')
-                
-                # จัดลำดับคอลัมน์
-                cols = ['เลขที่', 'ระดับ', 'ชื่อ-นามสกุล', 'ชื่อกลุ่ม'] + full_acts + ['คะแนนรวม']
-                res = res[cols]
-                
-                # แสดงตาราง (พื้นขาว ตัวหนังสือดำ)
-                st.dataframe(
-                    res.style.set_properties(**{'background-color': 'white', 'color': 'black', 'text-align': 'center'})
-                    .set_properties(subset=['ชื่อ-นามสกุล', 'ชื่อกลุ่ม'], **{'text-align': 'left'})
-                    .set_properties(subset=['คะแนนรวม'], **{'background-color': '#e8f5e9', 'font-weight': 'bold'})
-                    .set_table_styles([{'selector': 'th', 'props': [('background-color', '#1b5e20'), ('color', 'white')]}])
-                , use_container_width=True, hide_index=True)
-                
-                st.download_button(f"📥 โหลดไฟล์ {lv}", res.to_csv(index=False).encode('utf-8-sig'), f"Report_{lv}.csv")
+    # --- 5. การแสดงผลตารางคะแนนสรุป ---
+    if all_data:
+        df_master = pd.DataFrame(all_data).drop_duplicates()
+        
+        for lv in sorted(df_master['ระดับ'].unique()):
+            st.markdown(f'<div class="level-header">📍 ระดับชั้น {lv}</div>', unsafe_allow_html=True)
+            df_lv = df_master[df_master['ระดับ'] == lv]
+            
+            # สร้าง Pivot Table (1 = ส่งแล้ว, 0 = ยังไม่ส่ง)
+            pivot = df_lv.pivot_table(
+                index=['เลขที่', 'ชื่อ-นามสกุล'],
+                columns='กิจกรรม',
+                values='ระดับ',
+                aggfunc='count'
+            ).fillna(0)
+
+            # เติมคอลัมน์กิจกรรมให้ครบ 1.1 - 1.14
+            for act in full_acts:
+                if act not in pivot.columns:
+                    pivot[act] = 0
+            
+            # จัดเรียงและคำนวณคะแนน
+            pivot = pivot[full_acts].astype(int)
+            pivot['คะแนนรวม'] = pivot.sum(axis=1)
+            res = pivot.reset_index().sort_values('เลขที่')
+
+            # ฟังก์ชันตกแต่งสีคอลัมน์คะแนนรวม
+            def color_total(val):
+                if val >= 14: color = '#c8e6c9' # เขียว
+                elif val >= 7: color = '#fff9c4' # เหลือง
+                else: color = '#ffecb3'          # ส้ม
+                return f'background-color: {color}; font-weight: bold; color: black;'
+
+            # แสดงตาราง
+            st.dataframe(
+                res.style.set_properties(**{'text-align': 'center'})
+                .applymap(color_total, subset=['คะแนนรวม'])
+                .set_properties(subset=['ชื่อ-นามสกุล'], **{'text-align': 'left'})
+                .format({act: lambda x: '1' if x >= 1 else '0' for act in full_acts})
+                .set_table_styles([
+                    {'selector': 'th', 'props': [('background-color', '#1b5e20'), ('color', 'white'), ('text-align', 'center')]}
+                ]),
+                use_container_width=True, 
+                hide_index=True
+            )
+
+            # ส่วนสรุป Metrics
+            m1, m2, m3 = st.columns(3)
+            with m1: st.metric("นักเรียนที่ส่งงาน", f"{len(res)} คน")
+            with m2: st.metric("คะแนนเฉลี่ย", f"{res['คะแนนรวม'].mean():.1f} / 14")
+            with m3: st.metric("ส่งครบ 100%", f"{len(res[res['คะแนนรวม'] == 14])} คน")
+            
+            # ปุ่มโหลดไฟล์เฉพาะชั้น
+            csv_data = res.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(f"📥 ดาวน์โหลดไฟล์ Excel ({lv})", csv_data, f"คะแนน_{lv}.csv", "text/csv")
+            st.divider()
+
     else:
-        st.info("💡 กรุณาอัปโหลดไฟล์ที่มีข้อมูลนักเรียนครับ")
+        st.info("💡 ระบบพร้อมใช้งาน! กรุณาอัปโหลดไฟล์ CSV หรือ XLSX จาก Padlet ครับ")
+else:
+    st.warning("👈 เริ่มต้นโดยการอัปโหลดไฟล์ที่แถบด้านข้าง (หรือคลิกปุ่ม Browse files ด้านบน)")
+
+# --- 6. Footer ---
+st.markdown("<p style='text-align: center; color: #999;'>พัฒนาโดย Gemini AI สำหรับครูตระกูล บุญชิต</p>", unsafe_allow_html=True)
