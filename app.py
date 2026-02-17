@@ -3,28 +3,36 @@ import pandas as pd
 import re, os, base64
 from io import BytesIO
 
-# --- 1. CONFIG & STYLES ---
+# --- 1. การตั้งค่าหน้าจอและสไตล์ ---
 st.set_page_config(page_title="ระบบครูตระกูล v9.7", layout="wide")
 
-def inject_custom_css():
+def inject_styles():
     st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap');
         html, body, [class*="css"] { font-family: 'Sarabun', sans-serif; }
-        .main-header { background-color: #1b5e20; padding: 20px; border-radius: 15px; text-align: center; color: white; }
-        .level-header { background-color: #f0f4f1; padding: 10px 20px; border-radius: 10px; color: #1b5e20; font-size: 1.8rem; font-weight: bold; margin-top: 30px; border: 2px solid #1b5e20; }
-        .room-label { background-color: #e8f5e9; padding: 10px 15px; border-left: 5px solid #2e7d32; border-radius: 5px; margin: 15px 0; font-weight: bold; color: #1b5e20; }
+        .main-header { background-color: #1b5e20; padding: 20px; border-radius: 15px; text-align: center; color: white; margin-bottom: 20px;}
+        .level-header { background-color: #2e7d32; padding: 10px 20px; border-radius: 8px; color: white; font-size: 1.5rem; margin-top: 30px; }
+        .room-label { background-color: #f1f8e9; padding: 10px; border-left: 5px solid #8bc34a; border-radius: 4px; margin: 15px 0; font-weight: bold; color: #33691e; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. DATA PROCESSING --- (คงฟังก์ชันเดิมแต่ปรับการดึงระดับชั้น)
+def get_image_base64():
+    for ext in ["jpeg", "jpg", "png"]:
+        path = f"teacher.{ext}"
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                return f"data:image/{ext};base64," + base64.b64encode(f.read()).decode()
+    return "https://cdn-icons-png.flaticon.com/512/3429/3429433.png"
+
+# --- 2. ฟังก์ชันประมวลผลข้อมูล ---
+
 def process_master_files(files):
-    db = {}
+    levels_db = {}
     for f in files:
         name = f.name.replace('.xlsx', '').replace('.csv', '').split(' - ')[0]
-        # ดึงระดับชั้น เช่น "ม.3" จาก "ม.3-1"
         level_match = re.search(r'(ม\.\d+)', name)
-        level = level_match.group(1) if level_match else "ไม่ระบุระดับชั้น"
+        level = level_match.group(1) if level_match else "ระดับชั้นอื่น ๆ"
         
         df = pd.read_csv(f, encoding='utf-8-sig') if f.name.endswith('.csv') else pd.read_excel(f)
         c_sid = next((c for c in df.columns if "เลขที่" in str(c)), None)
@@ -35,38 +43,89 @@ def process_master_files(files):
             df_clean.columns = ['เลขที่', 'ชื่อ - นามสกุล']
             df_clean['เลขที่'] = pd.to_numeric(df_clean['เลขที่'], errors='coerce').fillna(0).astype(int)
             
-            if level not in db: db[level] = {}
-            db[level][name] = df_clean
-    return db
+            if level not in levels_db: levels_db[level] = {}
+            levels_db[level][name] = df_clean
+    return levels_db
 
-# --- 3. MAIN APP ---
+def process_padlet_files(files):
+    data = []
+    for f in files:
+        df = pd.read_csv(f, encoding='utf-8-sig') if f.name.endswith('.csv') else pd.read_excel(f)
+        col_sec = next((c for c in df.columns if any(k in str(c) for k in ["ส่วน", "Section", "ห้อง"])), None)
+        for _, row in df.iterrows():
+            txt = " ".join(map(str, row.values))
+            sid = re.search(r'(?:เลขที่|No\.|#)\s*(\d+)', txt)
+            act = re.search(r'1\.(\d{1,2})', txt)
+            if sid and act:
+                data.append({
+                    'เลขที่': int(sid.group(1)),
+                    'กิจกรรม': f"1.{act.group(1)}",
+                    'ห้อง_padlet': str(row[col_sec]).strip() if col_sec else ""
+                })
+    return pd.DataFrame(data).drop_duplicates() if data else pd.DataFrame()
+
+# --- 3. ส่วนแสดงผลหลัก ---
+
 def main():
-    inject_custom_css()
-    st.markdown('<div class="main-header"><h2>📋 ระบบรายงานผลแยกตามระดับชั้น (v9.7)</h2></div>', unsafe_allow_html=True)
+    inject_styles()
+    img_src = get_image_base64()
     
+    st.markdown(f"""
+    <div class="main-header"><h2>📋 ระบบเช็คการส่งงานรายห้อง โรงเรียนตระกาศประชาสามัคคี</h2></div>
+    <div style="display: flex; align-items: center; gap: 20px; margin-bottom: 20px;">
+        <img src="{img_src}" style="width: 80px; height: 80px; border-radius: 50%; border: 2px solid #1b5e20;">
+        <div><h3 style="margin:0;">ครูตระกูล บุญชิต (เจมส์)</h3><p style="margin:0;">จัดการข้อมูลการส่งงานจาก Padlet</p></div>
+    </div>
+    """, unsafe_allow_html=True)
+
     col1, col2 = st.columns(2)
-    m_files = col1.file_uploader("📂 1. อัปโหลดรายชื่อ (เช่น ม.1-1, ม.2-1, ม.3-1)", accept_multiple_files=True)
-    p_files = col2.file_uploader("📂 2. อัปโหลดงานจาก Padlet", accept_multiple_files=True)
+    m_files = col1.file_uploader("📂 1. อัปโหลดไฟล์รายชื่อ (ม.1-1, ม.2-1...)", accept_multiple_files=True)
+    p_files = col2.file_uploader("📂 2. อัปโหลดไฟล์จาก Padlet", accept_multiple_files=True)
 
     if m_files and p_files:
-        # แยกฐานข้อมูลตามระดับชั้น และตามห้อง
         levels_db = process_master_files(m_files)
-        # โค้ดส่วนดึง Padlet (เรียกจากโค้ดเดิม)
-        # ... (df_padlet = process_padlet_files(p_files)) ...
+        df_padlet = process_padlet_files(p_files)
         
-        # วนลูปตามระดับชั้น (ม.1, ม.2, ม.3)
-        for level in sorted(levels_db.keys()):
-            st.markdown(f'<div class="level-header">📚 ระดับชั้น {level}</div>', unsafe_allow_html=True)
-            
-            # วนลูปห้องเรียนในระดับชั้นนั้นๆ
-            for room, room_list in levels_db[level].items():
-                st.markdown(f'<div class="room-label">🏫 ห้อง: {room}</div>', unsafe_allow_html=True)
-                
-                # ... (ส่วนการแสดงผล Dataframe และปุ่ม Download xlsxwriter เดิม) ...
-                st.write(f"แสดงข้อมูลของ {room} ตรงนี้")
+        if not df_padlet.empty:
+            full_acts = [f"1.{i}" for i in range(1, 15)]
+            pivot = df_padlet.pivot_table(index=['เลขที่', 'ห้อง_padlet'], columns='กิจกรรม', aggfunc='size', fill_value=0).reset_index()
 
+            # แสดงผลแยกตามระดับชั้น
+            for level in sorted(levels_db.keys()):
+                st.markdown(f'<div class="level-header">📚 ระดับชั้น {level}</div>', unsafe_allow_html=True)
+                
+                for room, room_list in levels_db[level].items():
+                    # Matching Logic
+                    room_num = "".join(re.findall(r'\d+', room))
+                    r_pivot = pivot[pivot['ห้อง_padlet'].str.contains(room_num, na=False) | (pivot['ห้อง_padlet'] == "")]
+                    if r_pivot.empty: r_pivot = pivot
+
+                    # รวมข้อมูล
+                    final_df = room_list.merge(r_pivot, on='เลขที่', how='left').fillna(0)
+                    for a in full_acts: 
+                        if a not in final_df.columns: final_df[a] = 0
+                    
+                    final_df['รวม'] = final_df[full_acts].sum(axis=1)
+                    final_df = final_df.sort_values('เลขที่').reset_index(drop=True)
+                    final_df.insert(0, 'ลำดับ', final_df.index + 1)
+
+                    # แสดงตารางและปุ่มโหลด
+                    st.markdown(f'<div class="room-label">🏫 ห้อง: {room} (นักเรียน {len(room_list)} คน)</div>', unsafe_allow_html=True)
+                    
+                    # ดาวน์โหลด (xlsxwriter)
+                    buf = BytesIO()
+                    with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+                        final_df.to_excel(writer, index=False, sheet_name=room)
+                    st.download_button(f"📥 ดาวน์โหลด Excel {room}", buf.getvalue(), f"Check_{room}.xlsx", key=f"d_{room}")
+
+                    # ตารางหน้าเว็บ
+                    st.dataframe(
+                        final_df.style.format({a: lambda x: '✔' if x >= 1 else '-' for a in full_acts})
+                        .set_properties(**{'text-align': 'center'}),
+                        use_container_width=True, hide_index=True
+                    )
     else:
-        st.info("กรุณาอัปโหลดไฟล์รายชื่อที่มีการระบุระดับชั้น (เช่น ม.3-1) เพื่อให้ระบบแยกประเภทให้ครับ")
+        st.info("กรุณาอัปโหลดไฟล์รายชื่อและไฟล์จาก Padlet เพื่อแสดงตารางข้อมูลครับ")
 
 if __name__ == "__main__":
     main()
