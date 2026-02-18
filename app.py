@@ -1,146 +1,131 @@
 import streamlit as st
 import pandas as pd
-import re, os, base64
+import re
 from io import BytesIO
 
-# --- 1. การตั้งค่าหน้าจอและสไตล์ (UI/UX) ---
-st.set_page_config(page_title="ระบบครูตระกูล v9.8", layout="wide")
+# --- 1. ตั้งค่าหน้าจอ (Full Width & Expanded Space) ---
+st.set_page_config(page_title="ระบบครูตระกูล v10.0", layout="wide")
 
 def inject_custom_css():
     st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap');
-        html, body, [class*="css"] { font-family: 'Sarabun', sans-serif; background-color: #ffffff; }
-        .main-header { background-color: #1b5e20; padding: 25px; border-radius: 15px; text-align: center; color: white; border-bottom: 5px solid #4caf50; margin-bottom: 25px;}
-        .level-section { background-color: #e8f5e9; padding: 15px; border-radius: 10px; border-left: 10px solid #2e7d32; margin: 30px 0 15px 0; font-size: 1.8rem; font-weight: bold; color: #1b5e20; }
-        .room-label { background-color: #f1f8e9; padding: 10px 15px; border-left: 5px solid #8bc34a; border-radius: 5px; margin: 15px 0; font-weight: bold; color: #33691e; }
+        html, body, [class*="css"] { font-family: 'Sarabun', sans-serif; }
+        .main-header { background: linear-gradient(90deg, #0d47a1, #42a5f5); padding: 20px; border-radius: 10px; text-align: center; color: white; margin-bottom: 20px; }
+        .stDataFrame { width: 100% !important; }
     </style>
     """, unsafe_allow_html=True)
 
-def get_image_base64():
-    """ดึงภาพโปรไฟล์ครูตระกูล (รองรับ jpeg, jpg, png)"""
-    for ext in ["jpeg", "jpg", "png"]:
-        path = f"teacher.{ext}"
-        if os.path.exists(path):
-            with open(path, "rb") as f:
-                return f"data:image/{ext};base64," + base64.b64encode(f.read()).decode()
-    return "https://cdn-icons-png.flaticon.com/512/3429/3429433.png"
+def normalize_name(text):
+    """ฟอกชื่อให้สะอาดที่สุดเพื่อใช้เป็นกุญแจหลักในการรวมข้อมูล"""
+    if not text or pd.isna(text): return ""
+    t = str(text).replace(" ", "").replace("\xa0", "")
+    t = re.sub(r'(เด็กชาย|เด็กหญิง|นาย|นางสาว|ด\.ช\.|ด\.ญ\.|น\.ส\.|นาง|ชื่อ|นามสกุล|:|：)', '', t)
+    return t.strip()
 
-# --- 2. ฟังก์ชันประมวลผลข้อมูล (Data Processing) ---
+# --- 2. ฟังก์ชันประมวลผล (The Final Merge Logic) ---
 
-def process_master_files(files):
-    """แยกกลุ่มไฟล์รายชื่อตามระดับชั้น"""
-    levels_db = {}
-    for f in files:
-        name = f.name.replace('.xlsx', '').replace('.csv', '').split(' - ')[0]
-        # ดึงระดับชั้นจากชื่อไฟล์ เช่น "ม.3"
-        level_match = re.search(r'(ม\.\d+)', name)
-        level = level_match.group(1) if level_match else "ระดับชั้นอื่น ๆ"
-        
-        df = pd.read_csv(f, encoding='utf-8-sig') if f.name.endswith('.csv') else pd.read_excel(f)
-        c_sid = next((c for c in df.columns if "เลขที่" in str(c)), None)
-        c_name = next((c for c in df.columns if "ชื่อ" in str(c)), None)
-        
-        if c_sid and c_name:
-            df_clean = df[[c_sid, c_name]].copy().dropna()
-            df_clean.columns = ['เลขที่', 'ชื่อ - นามสกุล']
-            df_clean['เลขที่'] = pd.to_numeric(df_clean['เลขที่'], errors='coerce').fillna(0).astype(int)
+def process_ultimate_merge(m_files, p_files):
+    # 1. ดึงรายชื่อจากฝ่ายทะเบียนเป็นตัวตั้งต้น (Master Template)
+    master_db = []
+    for f in m_files:
+        try:
+            df = pd.read_excel(f) if f.name.endswith(('.xlsx', '.xls')) else pd.read_csv(f, encoding='utf-8-sig')
+            c_sid = next((c for c in df.columns if "เลขที่" in str(c)), None)
+            c_name = next((c for c in df.columns if any(k in str(c) for k in ["ชื่อ", "นามสกุล"])), None)
             
-            if level not in levels_db: levels_db[level] = {}
-            levels_db[level][name] = df_clean
-    return levels_db
+            if c_name:
+                room_label = f.name.split('.')[0]
+                room_id = "".join(re.findall(r'\d+', room_label)) # รหัสห้องจริง
+                for _, row in df.iterrows():
+                    master_db.append({
+                        'name_key': normalize_name(row[c_name]),
+                        'เลขที่_ทะเบียน': str(int(row[c_sid])) if c_sid and not pd.isna(row[c_sid]) else "-",
+                        'ชื่อ_ทะเบียน': str(row[c_name]).strip(),
+                        'ห้อง_ทะเบียน': room_label,
+                        'room_id_จริง': room_id
+                    })
+        except: continue
+    
+    # 🌟 บังคับให้ Master มี 1 ชื่อต่อ 1 แถวเท่านั้น
+    df_final = pd.DataFrame(master_db).drop_duplicates(subset=['name_key'])
 
-def process_padlet_files(files):
-    """ดึงข้อมูลกิจกรรมจากไฟล์ Padlet"""
-    data = []
-    for f in files:
-        df = pd.read_csv(f, encoding='utf-8-sig') if f.name.endswith('.csv') else pd.read_excel(f)
-        col_sec = next((c for c in df.columns if any(k in str(c) for k in ["ส่วน", "Section", "ห้อง"])), None)
-        for _, row in df.iterrows():
-            txt = " ".join(map(str, row.values))
-            sid = re.search(r'(?:เลขที่|No\.|#)\s*(\d+)', txt)
-            act = re.search(r'1\.(\d{1,2})', txt)
-            if sid and act:
-                data.append({
-                    'เลขที่': int(sid.group(1)),
-                    'กิจกรรม': f"1.{act.group(1)}",
-                    'ห้อง_padlet': str(row[col_sec]).strip() if col_sec else ""
-                })
-    return pd.DataFrame(data).drop_duplicates() if data else pd.DataFrame()
+    # 2. รวบรวมงานจาก Padlet และทำเครื่องหมายความถูกต้อง
+    acts = [f"1.{i}" for i in range(1, 15)]
+    for a in acts: df_final[a] = 0
 
-# --- 3. ส่วนแสดงผลแอปพลิเคชัน (Main App) ---
+    for f in p_files:
+        try:
+            df = pd.read_excel(f) if f.name.endswith(('.xlsx', '.xls')) else pd.read_csv(f, encoding='utf-8-sig')
+            col_sec = next((c for c in df.columns if any(k in str(c).lower() for k in ["ส่วน", "ห้อง"])), None)
+            for _, row in df.iterrows():
+                content = " ".join(map(str, row.values))
+                act_match = re.search(r'1\.(\d{1,2})', content)
+                sid_match = re.search(r'(?:เลขที่|No\.|#|n)\s*(\d+)', content, re.I)
+                
+                if act_match:
+                    act_name = f"1.{act_match.group(1)}"
+                    raw_room = str(row[col_sec]) if col_sec else ""
+                    room_typed = "".join(re.findall(r'\d+', raw_room))
+                    sid_typed = sid_match.group(1) if sid_match else None
+                    
+                    # 🚀 ขั้นตอนการ Match และ Aggregate (รวมงานเข้าหาชื่อเดิม)
+                    for idx, student in df_final.iterrows():
+                        if student['name_key'] != "" and student['name_key'] in normalize_name(content):
+                            # เช็คข้อมูลแฝง (เลขที่/ห้อง)
+                            is_wrong = False
+                            if sid_typed and sid_typed != student['เลขที่_ทะเบียน']: is_wrong = True
+                            if room_typed and student['room_id_จริง'] not in room_typed: is_wrong = True
+                            
+                            # อัปเดตสถานะ (ถ้าเคยเป็น 1 (ตรง) แล้ว ไม่ต้องเปลี่ยนเป็น 2 (เตือน))
+                            current = df_final.at[idx, act_name]
+                            if is_wrong:
+                                if current == 0: df_final.at[idx, act_name] = 2
+                            else:
+                                df_final.at[idx, act_name] = 1
+        except: continue
+                    
+    return df_final, acts
+
+# --- 3. ส่วนแสดงผล ---
 
 def main():
     inject_custom_css()
-    img_src = get_image_base64()
-    
-    st.markdown(f"""
-    <div class="main-header"><h2>📋 ระบบรายงานผลแยกตามระดับชั้น (ครูตระกูล บุญชิต)</h2></div>
-    <div style="display: flex; align-items: center; gap: 20px; margin-bottom: 25px;">
-        <img src="{img_src}" style="width: 100px; height: 100px; border-radius: 50%; border: 3px solid #1b5e20; object-fit: cover;">
-        <div>
-            <h1 style="margin:0; color: #1b5e20;">คุณครูตระกูล บุญชิต (เจมส์)</h1>
-            <p style="margin:0;">โรงเรียนตระกาศประชาสามัคคี | ระบบเช็คงานอัตโนมัติ v9.8</p>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown('<div class="main-header"><h3>📋 ระบบเช็คงานอัตโนมัติครูตระกูล v10.0 (Ultimate Merge)</h3></div>', unsafe_allow_html=True)
 
-    # ส่วนอัปโหลดไฟล์
-    col1, col2 = st.columns(2)
-    m_files = col1.file_uploader("📂 1. อัปโหลดรายชื่อ (ระบุชั้นในชื่อไฟล์ เช่น ม.3-1)", accept_multiple_files=True)
-    p_files = col2.file_uploader("📂 2. อัปโหลดงานจาก Padlet", accept_multiple_files=True)
+    with st.sidebar:
+        st.header("⚙️ การจัดการไฟล์")
+        m_files = st.file_uploader("1. ไฟล์รายชื่อฝ่ายทะเบียน", accept_multiple_files=True)
+        p_files = st.file_uploader("2. ไฟล์ส่งออกจาก Padlet", accept_multiple_files=True)
 
     if m_files and p_files:
-        levels_db = process_master_files(m_files)
-        df_padlet = process_padlet_files(p_files)
+        df_res, acts = process_ultimate_merge(m_files, p_files)
         
-        if not df_padlet.empty:
-            full_acts = [f"1.{i}" for i in range(1, 15)]
-            pivot = df_padlet.pivot_table(index=['เลขที่', 'ห้อง_padlet'], columns='กิจกรรม', aggfunc='size', fill_value=0).reset_index()
-
-            # แสดงผลตารางแยกตามระดับชั้น
-            for level in sorted(levels_db.keys()):
-                st.markdown(f'<div class="level-section">📚 ระดับชั้น {level}</div>', unsafe_allow_html=True)
-                
-                for room, room_list in levels_db[level].items():
-                    # Logic Matching ห้องเรียน
-                    room_num = "".join(re.findall(r'\d+', room))
-                    r_pivot = pivot[pivot['ห้อง_padlet'].str.contains(room_num, na=False) | (pivot['ห้อง_padlet'] == "")]
-                    if r_pivot.empty: r_pivot = pivot
-
-                    # รวมข้อมูลและเพิ่มคอลัมน์ "ชั้น"
-                    final_df = room_list.merge(r_pivot, on='เลขที่', how='left').fillna(0)
-                    final_df['ชั้น'] = level
-                    
-                    for a in full_acts: 
-                        if a not in final_df.columns: final_df[a] = 0
-                    
-                    final_df['รวม'] = final_df[full_acts].sum(axis=1)
-                    final_df = final_df.sort_values('เลขที่').reset_index(drop=True)
-                    final_df.insert(0, 'ลำดับ', final_df.index + 1)
-                    
-                    # จัดเรียงคอลัมน์ใหม่
-                    cols = ['ลำดับ', 'เลขที่', 'ชั้น', 'ชื่อ - นามสกุล'] + full_acts + ['รวม']
-                    final_df = final_df[cols]
-
-                    # ส่วนแสดงผลแต่ละห้อง
-                    st.markdown(f'<div class="room-label">🏫 ห้อง: {room} (นักเรียน {len(room_list)} คน)</div>', unsafe_allow_html=True)
-                    
-                    # ปุ่มดาวน์โหลด Excel (ใช้ xlsxwriter)
-                    buf = BytesIO()
-                    with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
-                        final_df.to_excel(writer, index=False, sheet_name=room)
-                    st.download_button(f"📥 โหลดไฟล์ Excel {room}", buf.getvalue(), f"Check_{room}.xlsx", key=f"btn_{room}")
-
-                    # แสดงตารางบนหน้าเว็บ
-                    st.dataframe(
-                        final_df.style.format({a: lambda x: '✔' if x >= 1 else '-' for a in full_acts})
-                        .set_properties(**{'text-align': 'center'})
-                        .set_properties(subset=['ชื่อ - นามสกุล'], **{'text-align': 'left'}),
-                        use_container_width=True, hide_index=True
-                    )
+        for room in sorted(df_res['ห้อง_ทะเบียน'].unique()):
+            st.markdown(f"#### 🏫 ห้อง: {room}")
+            room_df = df_res[df_res['ห้อง_ทะเบียน'] == room].copy()
+            room_df['สรุปส่ง'] = room_df[acts].apply(lambda x: (x > 0).sum(), axis=1)
+            
+            # แปลงรหัสเป็นสัญลักษณ์เพื่อความสวยงาม
+            display_df = room_df.copy()
+            for a in acts:
+                display_df[a] = display_df[a].map({1: "✅", 2: "⚠️", 0: "-"})
+            
+            # ขยายพื้นที่ตารางสรุปตามความต้องการ
+            st.dataframe(
+                display_df[['เลขที่_ทะเบียน', 'ชื่อ_ทะเบียน'] + acts + ['สรุปส่ง']]
+                .rename(columns={'เลขที่_ทะเบียน': 'เลขที่', 'ชื่อ_ทะเบียน': 'ชื่อ-นามสกุล'}),
+                use_container_width=True, 
+                hide_index=True,
+                height=800 # ปรับความสูงให้พอดีกับพื้นที่หน้าจอ
+            )
+            
+            # ปุ่มดาวน์โหลด Excel ที่สมบูรณ์
+            buf = BytesIO()
+            room_df.to_excel(buf, index=False)
+            st.download_button(f"📥 ดาวน์โหลดสรุป Excel {room}", buf.getvalue(), f"Official_Report_{room}.xlsx")
     else:
-        st.info("💡 กรุณาอัปโหลดไฟล์รายชื่อ (ม.1, ม.2, ม.3) และไฟล์ Padlet เพื่อเริ่มระบบครับ")
+        st.info("👋 คุณครูตระกูลครับ กรุณาอัปโหลดไฟล์รายชื่อและไฟล์งานเพื่อเริ่มระบบ 'รวมชื่ออัตโนมัติ' ครับ")
 
 if __name__ == "__main__":
     main()
